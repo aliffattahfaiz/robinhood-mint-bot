@@ -1162,6 +1162,30 @@
   $("feedRefresh").onclick = loadFeed;
   $("feedAuto").onchange = () => { clearInterval(feedTimer); if ($("feedAuto").checked) { loadFeed(); feedTimer = setInterval(loadFeed, 30000); } };
 
+  // Load from a pasted OpenSea link or a collection address → resolve to a contract and auto-fill the SeaDrop mint
+  async function loadFromSearch() {
+    const raw = $("feedSearch").value.trim();
+    if (!raw) return;
+    let nft = null;
+    const os = parseOpenSeaLink(raw);
+    if (os) {
+      $("feedStatus").textContent = "Resolving OpenSea link…";
+      log("Resolving OpenSea link …", "");
+      nft = await resolveOpenSeaNft(os);
+      if (!nft) { $("feedStatus").textContent = "Couldn't resolve that OpenSea link to a contract."; log("Couldn't resolve that OpenSea link to a contract.", "bad"); return; }
+    } else {
+      nft = parseAddr(raw);
+      if (!nft) { $("feedStatus").textContent = "Couldn't find a contract address in that input."; log("Couldn't find a contract address in that input.", "bad"); return; }
+    }
+    $("feedStatus").textContent = "Resolving " + shrink(nft) + " on-chain…";
+    const item = await enrichCollection(nft);
+    if (!item) { $("feedStatus").textContent = "Resolved " + shrink(nft) + " but it's not a readable SeaDrop drop."; log("Resolved " + shrink(nft) + " but it's not a readable SeaDrop drop on this chain.", "bad"); return; }
+    await loadCollectionIntoBot(item);
+    $("feedStatus").textContent = "";
+  }
+  $("feedSearchBtn").onclick = loadFromSearch;
+  $("feedSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFromSearch(); });
+
   // ---------- idle lock: re-ask for the password after 10 min without interaction ----------
   const IDLE_MS = 10 * 60 * 1000;
   let idleTimer = null;

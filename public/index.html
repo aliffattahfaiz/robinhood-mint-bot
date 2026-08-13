@@ -122,6 +122,11 @@
       <h2 style="margin:0">Live OpenSea / SeaDrop drops · Robinhood Chain</h2>
       <div><label style="display:inline;color:var(--mut);font-size:11px;margin-right:8px"><input type="checkbox" id="feedAuto" style="width:14px;height:14px;accent-color:var(--green);vertical-align:middle"> auto-refresh</label><button class="ghost" id="feedRefresh">↻ Refresh</button></div>
     </div>
+    <div class="row" style="margin-top:8px">
+      <div class="f" style="flex:3 1 320px"><label>Paste an OpenSea link or a collection address</label>
+        <input id="feedSearch" placeholder="opensea.io/collection/… or 0x… — Enter to auto-fill" spellcheck="false" autocomplete="off" autocapitalize="off"></div>
+      <button id="feedSearchBtn">Load</button>
+    </div>
     <div class="status" id="feedStatus">Refresh to pull collections minting live on-chain — click one to load it into the bot.</div>
     <div id="feedList" class="scroll"></div>
   </div>
@@ -272,6 +277,6 @@
 </div>
 
 <script src="vendor/ethers.umd.min.js" integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM" crossorigin="anonymous"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
