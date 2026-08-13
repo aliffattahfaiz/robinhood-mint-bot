@@ -662,18 +662,20 @@
     $("fetchProofs").disabled = true;
     try { await fetchProofsFor(tpl, false); } finally { $("fetchProofs").disabled = false; }
   };
-  $("scanProofs").onclick = async () => { wlScannedSince = 0; await scanProofEndpoint(); };
+  $("scanProofs").onclick = async () => { wlScannedSince = 0; await scanProofEndpoint(true); };
 
   // Auto-scan common proof-endpoint shapes for the loaded collection until one answers with a real proof.
-  async function scanProofEndpoint() {
-    if (wlScanning || !watchNft) return;
+  async function scanProofEndpoint(manual) {
+    if (wlScanning) { if (manual) log("Scan already running — wait a moment.", "warn"); return; }
+    if (!watchNft) { if (manual) log("Scan: load a collection first (paste the address in the feed box → Load).", "warn"); return; }
     const sel = selectedWallets();
-    if (!sel.length || wlScanning) return;
-    if (Date.now() - wlScannedSince < 20000) return; // at most one candidate burst every 20s
+    if (!sel.length) { if (manual) log("Scan: load + check at least one wallet first.", "warn"); return; }
+    const base = ($("wlSite").value.trim() || "").replace(/\/+$/, "");
+    if (!base) { if (manual) log("Scan: set the collection site URL first (e.g. https://hoodbirds.xyz).", "warn"); return; }
+    if (!manual && Date.now() - wlScannedSince < 20000) return; // auto mode: at most one burst every 20s
     wlScanning = true; wlScannedSince = Date.now();
+    if (manual) log("Scanning " + base + " for a proof endpoint (" + sel.length + " wallet(s) loaded)…", "");
     try {
-      const base = ($("wlSite").value.trim() || "").replace(/\/+$/, "");
-      if (!base) return;
       const addr = sel[0].address;
       const shapes = [
         base + "/api/proof?address={address}",
@@ -685,8 +687,9 @@
         base + "/api/check?address={address}",
         base + "/api/mint/proof?address={address}",
       ];
+      let found = null;
       for (const shape of shapes) {
-        if (wlProofs[addr.toLowerCase()]) return; // already have proofs — stop probing
+        if (wlProofs[addr.toLowerCase()]) { found = "already-have-proofs"; break; }
         try {
           const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 4000);
           const r = await fetch(shape.replace("{address}", addr), { signal: ctrl.signal });
@@ -696,14 +699,16 @@
           const j = await r.json().catch(() => null);
           if (!j) continue;
           const proof = Array.isArray(j) ? j : (j.proof || j.merkleProof || j.data && (j.data.proof || j.data.merkleProof));
-          if (Array.isArray(proof) && proof.length) {
-            $("proofUrl").value = shape;
-            log("🟢 Found proof endpoint: " + shape + " — fetching proofs for all checked wallets…", "ok");
-            await fetchProofsFor(shape, true);
-            return;
-          }
+          if (Array.isArray(proof) && proof.length) { found = shape; break; }
         } catch (e) {}
       }
+      if (found && found !== "already-have-proofs") {
+        $("proofUrl").value = found;
+        log("🟢 Found proof endpoint: " + found + " — fetching proofs for all checked wallets…", "ok");
+        await fetchProofsFor(found, true);
+        return;
+      }
+      if (manual) log("Scan done — no proof endpoint responding yet. The auto-scan re-checks every 15s and will fetch proofs the moment it appears.", "warn");
     } finally { wlScanning = false; }
   }
 
