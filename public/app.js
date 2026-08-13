@@ -202,10 +202,17 @@
     maybeAutoGas();
   }
   function selectedWallets() { return wallets.filter((w) => w.sel); }
+  function setAllSelected(v) {
+    for (const w of wallets) w.sel = v;
+    renderWalletList();
+    updateTotal();
+    maybeAutoGas();
+  }
   function renderWalletList() {
     if (!wallets.length) { $("walletStatus").innerHTML = "No wallets loaded."; return; }
     const sel = selectedWallets().length;
     let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">" + sel + " checked — input cleared, held in memory</span><br>";
+    html += '<div class="row" style="margin-top:6px"><button class="ghost" id="selAll">Select all</button> <button class="ghost" id="selNone">Unselect all</button></div>';
     html += wallets.map((w, i) =>
       '<label class="wrow"><input type="checkbox" data-i="' + i + '"' + (w.sel ? " checked" : "") + "> " + shrink(w.address) + "</label>"
     ).join("");
@@ -213,6 +220,8 @@
     $("walletStatus").querySelectorAll("input[type=checkbox]").forEach((cb) => {
       cb.onchange = () => { wallets[+cb.dataset.i].sel = cb.checked; renderWalletList(); updateTotal(); maybeAutoGas(); };
     });
+    $("selAll").onclick = () => setAllSelected(true);
+    $("selNone").onclick = () => setAllSelected(false);
   }
   function initVault() {
     $("vaultTitle").textContent = getVault() ? "Unlock" : "Set a password";
