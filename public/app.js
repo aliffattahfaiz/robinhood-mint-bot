@@ -126,17 +126,41 @@
     const i = +e.target.dataset.i;
     if (e.target.classList.contains("rchk")) rpcRows[i].on = e.target.checked;
     else if (e.target.classList.contains("rurl")) rpcRows[i].url = e.target.value.trim();
+    saveRpcPrefs();
   });
   $("rpcList").addEventListener("click", (e) => {
     if (!e.target.classList.contains("rm")) return;
-    rpcRows.splice(+e.target.dataset.i, 1); renderRpcRows();
+    rpcRows.splice(+e.target.dataset.i, 1); renderRpcRows(); saveRpcPrefs();
   });
   $("addRpc").onclick = () => {
     const c = CHAINS[currentPreset]; const p = (c.providers || [])[+$("rpcProvider").value] || { url: "" };
-    rpcRows.push({ url: p.url, on: true }); renderRpcRows();
+    rpcRows.push({ url: p.url, on: true }); renderRpcRows(); saveRpcPrefs();
   };
-  $("preset").onchange = () => applyPreset($("preset").value);
+  $("preset").onchange = () => { applyPreset($("preset").value); saveRpcPrefs(); };
   $("chainId").onchange = () => { chainId = BigInt($("chainId").value.trim() || "1"); };
+
+  // RPC endpoints are public URLs (not keys) — persist them locally so they survive reload.
+  function saveRpcPrefs() {
+    try {
+      localStorage.setItem("rhmb_preset", $("preset").value);
+      localStorage.setItem("rhmb_rpcs", JSON.stringify(rpcRows.map((r) => ({ url: r.url, on: r.on }))));
+    } catch (e) { /* storage unavailable */ }
+  }
+  function restoreRpcPrefs() {
+    let preset = null, rows = null;
+    try { preset = localStorage.getItem("rhmb_preset"); rows = localStorage.getItem("rhmb_rpcs"); } catch (e) { /* storage unavailable */ }
+    let parsed = null;
+    try { parsed = rows ? JSON.parse(rows) : null; } catch (e) { parsed = null; }
+    if (!parsed || !Array.isArray(parsed) || !parsed.length || !parsed.every((r) => r && typeof r.url === "string")) {
+      $("preset").value = "rh-main"; applyPreset("rh-main"); return;
+    }
+    const key = preset && CHAINS[preset] ? preset : "custom";
+    $("preset").value = key;
+    applyPreset(key);
+    rpcRows = parsed.map((r) => ({ url: r.url, on: r.on !== false }));
+    renderRpcRows();
+    log("Restored " + rpcRows.length + " saved RPC endpoint(s).", "ok");
+  }
 
   // ---------- RPC pool ----------
   function makeProvider(url) {
@@ -944,9 +968,8 @@
   $("feedAuto").onchange = () => { clearInterval(feedTimer); if ($("feedAuto").checked) { loadFeed(); feedTimer = setInterval(loadFeed, 30000); } };
 
   // ---------- init ----------
-  $("preset").value = "rh-main";
-  applyPreset("rh-main");
+  restoreRpcPrefs();
   applyMethodUI();
   renderGasChart(E.parseUnits("0.047", "gwei"), 0n, null); // draw bars immediately (no network call)
-  log("Ready. Client-side only — nothing is stored. Test RPCs, load a burner key, fetch functions, fire.", "ok");
+  log("Ready. Client-side only — keys are never stored (RPC endpoints are saved locally). Test RPCs, load a burner key, fetch functions, fire.", "ok");
 })();

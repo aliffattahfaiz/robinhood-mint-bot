@@ -8,3 +8,4 @@ npm-debug.log*
 scratch/
 *.tmp
 .vercel
+.env*

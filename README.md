@@ -10,8 +10,8 @@ static site, but runs **entirely in the user's browser** — private keys never 
 - **Client-side only.** The page is static. All logic — key handling, signing, RPC calls — runs in the browser.
 - **Keys never leave the browser.** Private keys are held in memory only. They are **never** sent to this site,
   any server, disk, `localStorage`/`sessionStorage`/cookies/IndexedDB. They only ever leave as a **signed
-  transaction**, sent from the **user's own IP** directly to the RPCs they configure. (Verified in-browser: after
-  connecting and loading a key, all storage stays empty and no cookies are set.)
+  transaction**, sent from the **user's own IP** directly to the RPCs they configure. The only thing persisted
+  locally is the RPC endpoint list and preset (public URLs, not secrets) so your setup survives reloads.
 - **No runtime CDN.** ethers v6.13.4 is vendored (`public/vendor/`) and self-hosted. `Content-Security-Policy`
   blocks all external scripts, so nothing can be injected to exfiltrate a key.
 - **RPC from the user's IP, not the site's.** Because all calls are client-side, each user's requests come from
