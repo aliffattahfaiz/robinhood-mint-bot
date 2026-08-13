@@ -529,17 +529,17 @@
         const iface = new E.Interface(res.abi);
         contractIface = iface;   // keep the full interface so we can decode this contract's custom errors
         iface.forEachFunction((f) => { if (f.stateMutability !== "view" && f.stateMutability !== "pure") frags.push(f); });
-        // SeaDrop collections must be minted THROUGH the SeaDrop contract, not directly
-        if (frags.some((f) => f.name === "mintSeaDrop")) {
-          log("SeaDrop collection detected — auto-switching to the SeaDrop contract's mintPublic…", "warn");
-          const item = await enrichCollection(addr);
-          if (item) { await loadCollectionIntoBot(item); return; }
-          log("⚠ Couldn't read the drop config for this collection. Paste the SeaDrop address (0x00005EA0…) and pick mintPublic manually.", "warn");
-        }
       } else if (res.selectors && res.selectors.length) {
         for (const sig of res.selectors) {
           try { const f = E.FunctionFragment.from("function " + sig); frags.push(f); } catch (e) {}
         }
+      }
+      // SeaDrop collections must be minted THROUGH the SeaDrop contract, not directly
+      if (frags.some((f) => f.name === "mintSeaDrop")) {
+        log("SeaDrop collection detected — auto-switching to the SeaDrop contract's mintPublic…", "warn");
+        const item = await enrichCollection(addr);
+        if (item) { await loadCollectionIntoBot(item); return; }
+        log("⚠ Couldn't read the drop config for this collection. Paste the SeaDrop address (0x00005EA0…) and pick mintPublic manually.", "warn");
       }
       if (!frags.length) {
         $("abiStatus").innerHTML = '<span class="warn">No callable functions found (' + res.source + "). Use manual raw calldata / import from a mint tx below.</span>";
