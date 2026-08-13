@@ -38,7 +38,7 @@
   // ---------- state (memory only) ----------
   let currentPreset = "rh-main";
   let chainId = 4663n;
-  let wallets = [];          // [{wallet, address}]
+  let wallets = [];          // [{wallet, address, sel}] — sel = checked, only checked ones mint
   let pool = [];             // [{url, provider, coolUntil, ok, latency, chainId}]
   let rr = 0;
   let contractAddr = null;
@@ -190,18 +190,29 @@
     const next = []; let idx = 0;
     for (const raw of $("keys").value.split("\n")) {
       const k = normKey(raw); if (!k) continue; idx++;
-      try { const w = new E.Wallet(k); next.push({ wallet: w, address: w.address }); }
+      try { const w = new E.Wallet(k); next.push({ wallet: w, address: w.address, sel: true }); }
       catch (e) { log("Line " + idx + ": invalid private key — skipped.", "bad"); }
     }
     if (!next.length) return;
     wallets = next;
     $("keys").value = "";
-    let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">input cleared — held in memory</span><br>";
-    for (const w of wallets) html += '<span class="pill">' + shrink(w.address) + "</span>";
-    $("walletStatus").innerHTML = html;
+    renderWalletList();
     log(wallets.length + " wallet(s) restored from vault.", "ok");
     updateTotal();
     maybeAutoGas();
+  }
+  function selectedWallets() { return wallets.filter((w) => w.sel); }
+  function renderWalletList() {
+    if (!wallets.length) { $("walletStatus").innerHTML = "No wallets loaded."; return; }
+    const sel = selectedWallets().length;
+    let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">" + sel + " checked — input cleared, held in memory</span><br>";
+    html += wallets.map((w, i) =>
+      '<label class="wrow"><input type="checkbox" data-i="' + i + '"' + (w.sel ? " checked" : "") + "> " + shrink(w.address) + "</label>"
+    ).join("");
+    $("walletStatus").innerHTML = html;
+    $("walletStatus").querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.onchange = () => { wallets[+cb.dataset.i].sel = cb.checked; renderWalletList(); updateTotal(); maybeAutoGas(); };
+    });
   }
   function initVault() {
     $("vaultTitle").textContent = getVault() ? "Unlock" : "Set a password";
@@ -377,10 +388,11 @@
     const next = []; let idx = 0;
     for (const raw of $("keys").value.split("\n")) {
       const k = normKey(raw); if (!k) continue; idx++;
-      try { const w = new E.Wallet(k); next.push({ wallet: w, address: w.address }); }
+      try { const w = new E.Wallet(k); next.push({ wallet: w, address: w.address, sel: true }); }
       catch (e) { log("Line " + idx + ": invalid private key — skipped.", "bad"); }
     }
     if (!next.length) {
+      renderWalletList();
       $("walletStatus").innerHTML = wallets.length
         ? '<span class="warn">No new keys parsed — keeping ' + wallets.length + " loaded.</span>"
         : '<span class="bad">No valid keys loaded.</span>';
@@ -389,9 +401,7 @@
     wallets = next;
     saveVault(); // persist encrypted before clearing the field
     $("keys").value = ""; // hold keys in memory only; clear the field to shorten on-screen exposure
-    let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">input cleared — held in memory</span><br>";
-    for (const w of wallets) html += '<span class="pill">' + shrink(w.address) + "</span>";
-    $("walletStatus").innerHTML = html;
+    renderWalletList();
     log(wallets.length + " wallet(s) loaded; key field cleared.", "ok");
     if (pool.length) {
       for (const w of wallets) {
@@ -665,7 +675,8 @@
   async function updateTotal(px) {
     const gl = $("gaslimit").value.trim() ? BigInt($("gaslimit").value.trim()) : 0n;
     const count = Math.max(1, parseInt($("count").value.trim() || "1", 10));
-    const w = Math.max(1, wallets.length);
+    const sel = selectedWallets();
+    const w = Math.max(1, sel.length);
     const bulk = $("method") && $("method").value === "bulk";
     const mints = count * w;
     const onchainTx = bulk ? w : mints;
@@ -682,7 +693,7 @@
           (px ? ' = <span class="usd">$' + (totEth * px).toFixed(2) + "</span>" : "");
       } catch (e) {}
     }
-    $("totalStatus").innerHTML = wallets.length + " wallet(s) × " + count + costStr;
+    $("totalStatus").innerHTML = sel.length + " checked / " + wallets.length + " wallet(s) × " + count + costStr;
   }
 
   // ---------- auto gas limit ----------
@@ -692,7 +703,8 @@
   }
   // estimate the gas for ONE on-chain tx of the current mint (deploy for bulk); null if it can't
   async function estimateGasLimit() {
-    if (!wallets.length || !contractAddr) return null;
+    const sel = selectedWallets();
+    if (!sel.length || !contractAddr) return null;
     if (!pool.length) buildPool();
     try {
       const data = getCalldata();
@@ -701,9 +713,9 @@
       if ($("method").value === "bulk") {
         const count = Math.max(1, parseInt($("count").value.trim() || "1", 10));
         const args = E.AbiCoder.defaultAbiCoder().encode(["address", "uint256", "bytes"], [contractAddr, BigInt(count), data]);
-        g = await rpc((p) => p.estimateGas({ from: wallets[0].address, data: MINTER_BYTECODE + args.slice(2), value: value * BigInt(count) }));
+        g = await rpc((p) => p.estimateGas({ from: sel[0].address, data: MINTER_BYTECODE + args.slice(2), value: value * BigInt(count) }));
       } else {
-        g = await rpc((p) => p.estimateGas({ from: wallets[0].address, to: contractAddr, data, value }));
+        g = await rpc((p) => p.estimateGas({ from: sel[0].address, to: contractAddr, data, value }));
       }
       return (g * 130n) / 100n; // +30% buffer
     } catch (e) { return null; }
@@ -832,6 +844,8 @@
     if (!pool.length) buildPool();
     if (!pool.length) { log("Add RPC endpoints first.", "bad"); return; }
     if (!wallets.length) { log("Load a wallet first.", "bad"); return; }
+    const selWallets = selectedWallets();
+    if (!selWallets.length) { log("Check at least one wallet to mint with.", "bad"); return; }
     if (!contractAddr) { log("Set the contract address.", "bad"); return; }
 
     const repeat = $("loopMode").value === "repeat";
@@ -859,8 +873,8 @@
     // ----- mint method: how the tx is built + submitted -----
     const method = $("method").value;
     const isBulk = method === "bulk";
-    const mints = count * wallets.length;                 // NFTs attempted
-    const onchainTx = isBulk ? wallets.length : mints;    // actual on-chain txs
+    const mints = count * selWallets.length;                 // NFTs attempted
+    const onchainTx = isBulk ? selWallets.length : mints;    // actual on-chain txs
     const perTxValue = isBulk ? value * BigInt(count) : value;
     const perTxGas = gasLimit; // per on-chain tx (auto-estimate/default already account for bulk's N mints)
     let submitEps = method === "seq" ? getSequencerEps() : null;
@@ -883,7 +897,7 @@
     const totalEth = value * BigInt(mints);
     const ok = window.confirm(
       "FIRE MINT · " + method.toUpperCase() + "\n\n" + preflight + "\n" + mints + " mint(s) via " + onchainTx + " tx" +
-      (isBulk ? " (bulk: 1 tx × " + count + " mints × " + wallets.length + " wallet)" : " (" + wallets.length + " wallet × " + count + ")") +
+      (isBulk ? " (bulk: 1 tx × " + count + " mints × " + selWallets.length + " checked wallet)" : " (" + selWallets.length + " checked wallet × " + count + ")") +
       "\nto " + contractAddr + "\nchainId " + cid + "\nTOTAL VALUE ≈ " + E.formatEther(totalEth) + " ETH\n" +
       (isBulk ? "⚠ BULK: set the mint recipient to YOUR address in the args; reverts if the contract requires tx.origin==msg.sender.\n" : "") +
       (method === "seq" && submitEps ? "Submitting via sequencer endpoint.\n" : "") +
@@ -898,14 +912,14 @@
     try {
       // pre-sign a round BEFORE the trigger; nonces come from nonceMap, only fetched round 1 or on resync
       async function buildRound() {
-        await Promise.all(wallets.map(async (w) => {
+        await Promise.all(selWallets.map(async (w) => {
           if (nonceMap[w.address] === undefined || resync.has(w.address)) {
             try { nonceMap[w.address] = await rpc((p) => p.getTransactionCount(w.address, "pending")); resync.delete(w.address); }
             catch (e) { log("nonce fetch failed " + shrink(w.address) + ": " + (e.shortMessage || e.message), "bad"); }
           }
         }));
         const batches = [];
-        for (const w of wallets) {
+        for (const w of selWallets) {
           const start = nonceMap[w.address];
           if (start === undefined) continue;
           const signed = [];
@@ -967,19 +981,21 @@
 
   // one eth_call of the exact mint the current settings would fire; throws on revert
   async function simulateOnce() {
+    const sel = selectedWallets();
     const data = getCalldata();
     const value = E.parseEther($("value").value.trim() || "0");
     if ($("method").value === "bulk") {
       const count = Math.max(1, parseInt($("count").value.trim() || "1", 10));
       const args = E.AbiCoder.defaultAbiCoder().encode(["address", "uint256", "bytes"], [contractAddr, BigInt(count), data]);
-      await rpc((p) => p.call({ from: wallets[0].address, data: MINTER_BYTECODE + args.slice(2), value: value * BigInt(count) }));
+      await rpc((p) => p.call({ from: sel[0].address, data: MINTER_BYTECODE + args.slice(2), value: value * BigInt(count) }));
     } else {
-      await rpc((p) => p.call({ from: wallets[0].address, to: contractAddr, data, value }));
+      await rpc((p) => p.call({ from: sel[0].address, to: contractAddr, data, value }));
     }
   }
   $("simulate").onclick = async () => {
     if (!pool.length) buildPool();
     if (!wallets.length) { log("Load a wallet first.", "bad"); return; }
+    if (!selectedWallets().length) { log("Check at least one wallet to simulate.", "bad"); return; }
     if (!contractAddr) { log("Set the contract address.", "bad"); return; }
     try { await simulateOnce(); log("Simulate OK — this mint would not revert.", "ok"); }
     catch (e) { log("Simulate reverted: " + decodeRevert(e), "bad"); }
