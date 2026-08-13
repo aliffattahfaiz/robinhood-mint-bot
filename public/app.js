@@ -531,7 +531,10 @@
         iface.forEachFunction((f) => { if (f.stateMutability !== "view" && f.stateMutability !== "pure") frags.push(f); });
         // SeaDrop collections must be minted THROUGH the SeaDrop contract, not directly
         if (frags.some((f) => f.name === "mintSeaDrop")) {
-          log("⚠ SeaDrop collection: don't call mintSeaDrop directly (reverts OnlyAllowedSeaDrop). Mint via the SeaDrop contract's mintPublic — set the contract field to the SeaDrop address.", "warn");
+          log("SeaDrop collection detected — auto-switching to the SeaDrop contract's mintPublic…", "warn");
+          const item = await enrichCollection(addr);
+          if (item) { await loadCollectionIntoBot(item); return; }
+          log("⚠ Couldn't read the drop config for this collection. Paste the SeaDrop address (0x00005EA0…) and pick mintPublic manually.", "warn");
         }
       } else if (res.selectors && res.selectors.length) {
         for (const sig of res.selectors) {
