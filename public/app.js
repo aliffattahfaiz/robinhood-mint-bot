@@ -53,6 +53,9 @@
   let feeGp = null, feeGpAt = 0;
   let running = false, stopFlag = false;
   let rpcRows = [];          // [{url, on}] — the RPC selector state
+  let wlProofs = {};         // address(lower) -> bytes32[] merkle proof, for mintAllowList
+  let watchNft = null;       // collection the allowlist watcher is watching
+  let wlRoot = null;         // last seen allowlist merkle root
 
   // ---------- logging ----------
   const logEl = $("log");
@@ -609,6 +612,35 @@
     throw new Error("No calldata — pick a function or paste raw calldata.");
   }
 
+  // Parse the per-wallet Merkle proofs textarea (one "0xWALLET:[...]" per line) into wlProofs.
+  function parseProofs() {
+    wlProofs = {};
+    for (const line of $("proofs").value.split("\n")) {
+      const t = line.trim(); if (!t) continue;
+      const ci = t.indexOf(":");
+      if (ci <= 0) continue;
+      let addr = t.slice(0, ci).trim();
+      try { addr = E.getAddress(addr); } catch (e) { continue; }
+      try { wlProofs[addr.toLowerCase()] = JSON.parse(t.slice(ci + 1)); } catch (e) {}
+    }
+    const n = Object.keys(wlProofs).length;
+    $("wlStatus").innerHTML = n ? "<span class='ok'>" + n + " proof(s) loaded.</span> Pick <b>mintAllowList</b> and Fire." : "Paste proofs, then pick mintAllowList and Fire.";
+  }
+  $("proofs").addEventListener("input", parseProofs);
+
+  // mintAllowList needs a per-wallet proof: re-encode p0..p4 (nft/fee/minter/qty/mintParams) with THIS wallet's proof.
+  // Returns null if mintAllowList is selected but this wallet has no proof (caller must skip it).
+  function dataForWallet(w, base) {
+    const proof = wlProofs[(w.address || "").toLowerCase()];
+    if (selectedFrag && selectedFrag.name === "mintAllowList") {
+      if (!proof || !proof.length) return null;
+      const args = selectedFrag.inputs.map((inp, k) => (k === 5 ? proof : coerceArg($("p" + k).value, inp.type)));
+      return new E.Interface([selectedFrag.format("full")]).encodeFunctionData(selectedFrag.name, args);
+    }
+    return base;
+  }
+
+
   $("importTx").onclick = async () => {
     if (!pool.length) buildPool();
     const h = $("txhash").value.trim(); if (!h) { log("Enter a tx hash.", "bad"); return; }
@@ -752,7 +784,8 @@
     if (!sel.length || !contractAddr) return null;
     if (!pool.length) buildPool();
     try {
-      const data = getCalldata();
+      const data = dataForWallet(sel[0], getCalldata());
+      if (data === null) return null; // mintAllowList w/o proof — can't estimate yet
       const value = E.parseEther($("value").value.trim() || "0");
       let g;
       if ($("method").value === "bulk") {
@@ -975,7 +1008,9 @@
             signed.push({ raw: await w.wallet.signTransaction(tx), label: shrink(w.address) + " bulk×" + count + " n" + start });
           } else {
             for (let i = 0; i < count; i++) {
-              const tx = { chainId: cid, to: contractAddr, data, value: perTxValue, gasLimit: perTxGas, nonce: start + i, type: 2, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
+              const d = dataForWallet(w, data);
+              if (d === null) continue;
+              const tx = { chainId: cid, to: contractAddr, data: d, value: perTxValue, gasLimit: perTxGas, nonce: start + i, type: 2, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
               signed.push({ raw: await w.wallet.signTransaction(tx), label: shrink(w.address) + " n" + (start + i) });
             }
           }
@@ -1027,7 +1062,8 @@
   // one eth_call of the exact mint the current settings would fire; throws on revert
   async function simulateOnce() {
     const sel = selectedWallets();
-    const data = getCalldata();
+    const data = dataForWallet(sel[0], getCalldata());
+    if (data === null) throw new Error("mintAllowList: first checked wallet has no proof loaded.");
     const value = E.parseEther($("value").value.trim() || "0");
     if ($("method").value === "bulk") {
       const count = Math.max(1, parseInt($("count").value.trim() || "1", 10));
@@ -1062,6 +1098,24 @@
   const EXPLORER_BASE = "https://robinhoodchain.blockscout.com";
   const fmtPrice = (wei) => wei === 0n ? "FREE" : E.formatEther(wei) + " ETH";
   let feedItems = [], feedTimer = null, feedUnitPrice = 0n;
+
+  // Watch the allowlist merkle root for a collection: once it's non-zero the allowlist stage is committed on-chain.
+  async function checkAllowlistRoot() {
+    const nft = watchNft;
+    if (!nft) { $("wlWatch").innerHTML = ""; return; }
+    try {
+      const root = await rpc((p) => new E.Contract(SEADROP, ["function getAllowListMerkleRoot(address) view returns (bytes32)"], p).getAllowListMerkleRoot(nft));
+      const zero = "0x" + "0".repeat(64);
+      const isSet = root && root.toLowerCase() !== zero.toLowerCase();
+      if (isSet && wlRoot !== root) {
+        wlRoot = root;
+        log("🟢 ALLOWLIST ROOT IS SET for " + shrink(nft) + ": " + root + " — the allowlist stage is live on-chain.", "ok");
+      }
+      $("wlWatch").innerHTML = isSet
+        ? "Allowlist root: <span class='ok'>SET · " + shrink(root) + "</span> — mintAllowList is live, paste proofs and Fire."
+        : "Allowlist root: not set (0x0). FCFS stage not committed on-chain yet — polling…";
+    } catch (e) { $("wlWatch").textContent = "Allowlist check failed: " + (e.shortMessage || e.message); }
+  }
 
   async function throttle(arr, n, fn) {
     const out = []; let i = 0;
@@ -1138,29 +1192,56 @@
 
   async function loadCollectionIntoBot(item) {
     if (!item) return;
+    watchNft = item.nft;
+    wlRoot = null;
+    checkAllowlistRoot();
     log("Loading " + (item.name || shrink(item.nft)) + " …", "");
     let fee = OS_FEE;
     try { if (item.restrictFee) { const fr = await rpc((p) => new E.Contract(SEADROP, SD_READ, p).getAllowedFeeRecipients(item.nft)); if (fr && fr.length) fee = fr[0]; } } catch (e) {}
     $("contract").value = SEADROP;
     await fetchFunctions(); // loads SeaDrop ABI + chips (also sets contractIface for error decoding)
-    const idx = abiFragments.findIndex((f) => f.name === "mintPublic" && f.inputs.length === 4);
-    if (idx < 0) { log("mintPublic not found on the SeaDrop ABI — use raw calldata.", "bad"); return; }
-    for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === idx);
-    selectFn(idx);
-    $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
-    encodeSelected();
-    feedUnitPrice = item.price;
-    $("value").value = E.formatEther(item.price); // exact per-1 price; SeaDrop requires exact payment
-    $("value").dispatchEvent(new Event("input"));
-    // keep value = price × quantity as the user edits quantity
-    $("p3").addEventListener("input", () => { try { const q = BigInt($("p3").value.trim() || "0"); $("value").value = E.formatEther(feedUnitPrice * q); $("value").dispatchEvent(new Event("input")); } catch (e) {} });
     const live = item.status === "live";
-    log("Loaded " + (item.name || "collection") + " — mintPublic ready · " + fmtPrice(item.price) + " each · max " + item.maxWallet + "/wallet. " + (live ? "🟢 LIVE — set quantity and Fire." : "⚠ not live right now (" + item.status + ")."), live ? "ok" : "warn");
+
+    // Prefer the allowlist function when present — the drop may gate on it (FCFS/GTD races).
+    const wlIdx = abiFragments.findIndex((f) => f.name === "mintAllowList");
+    if (wlIdx >= 0) {
+      for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === wlIdx);
+      selectFn(wlIdx);
+      $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
+      // MintParams tuple: [mintPrice, maxTotalMintableByWallet, startTime, endTime, dropStageIndex, maxTokenSupplyForStage, feeBps, restrictFeeRecipients]
+      if (!$("wlMintParams").value.trim()) {
+        const maxSupply = item.max && item.max > 0n ? Number(item.max) : 4500;
+        $("wlMintParams").value = JSON.stringify([0, item.maxWallet, item.start, item.end, 0, maxSupply, 1000, item.restrictFee ? true : false]);
+      }
+      $("p4").value = $("wlMintParams").value.trim();
+      $("p5").value = ""; // per-wallet proof — filled from the proofs box at fire time
+      encodeSelected();
+      // SeaDrop requires exact payment: value = mintParams[0] (price) × quantity
+      try { feedUnitPrice = BigInt(JSON.parse($("wlMintParams").value.trim() || "[0]")[0] || 0); } catch (e) { feedUnitPrice = 0n; }
+      $("value").value = E.formatEther(feedUnitPrice);
+      $("value").dispatchEvent(new Event("input"));
+      $("p3").addEventListener("input", () => { try { const q = BigInt($("p3").value.trim() || "0"); $("value").value = E.formatEther(feedUnitPrice * q); $("value").dispatchEvent(new Event("input")); } catch (e) {} });
+      log("Loaded " + (item.name || "collection") + " — mintAllowList ready · " + fmtPrice(feedUnitPrice) + " each · max " + item.maxWallet + "/wallet. Paste proofs below, then Fire." + (live ? " 🟢 LIVE" : " ⚠ not live (" + item.status + ")"), live ? "ok" : "warn");
+    } else {
+      const idx = abiFragments.findIndex((f) => f.name === "mintPublic" && f.inputs.length === 4);
+      if (idx < 0) { log("mintPublic/mintAllowList not found on the SeaDrop ABI — use raw calldata.", "bad"); return; }
+      for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === idx);
+      selectFn(idx);
+      $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
+      encodeSelected();
+      feedUnitPrice = item.price;
+      $("value").value = E.formatEther(item.price); // exact per-1 price; SeaDrop requires exact payment
+      $("value").dispatchEvent(new Event("input"));
+      // keep value = price × quantity as the user edits quantity
+      $("p3").addEventListener("input", () => { try { const q = BigInt($("p3").value.trim() || "0"); $("value").value = E.formatEther(feedUnitPrice * q); $("value").dispatchEvent(new Event("input")); } catch (e) {} });
+      log("Loaded " + (item.name || "collection") + " — mintPublic ready · " + fmtPrice(item.price) + " each · max " + item.maxWallet + "/wallet. " + (live ? "🟢 LIVE — set quantity and Fire." : "⚠ not live right now (" + item.status + ")."), live ? "ok" : "warn");
+    }
     document.getElementById("fire").scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   $("feedRefresh").onclick = loadFeed;
   $("feedAuto").onchange = () => { clearInterval(feedTimer); if ($("feedAuto").checked) { loadFeed(); feedTimer = setInterval(loadFeed, 30000); } };
+  setInterval(() => { if (watchNft) checkAllowlistRoot(); }, 10000); // keep watching the allowlist root every 10s
 
   // Load from a pasted OpenSea link or a collection address → resolve to a contract and auto-fill the SeaDrop mint
   async function loadFromSearch() {
