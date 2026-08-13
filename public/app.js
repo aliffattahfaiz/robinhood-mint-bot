@@ -86,6 +86,9 @@
 
   // ---------- key wiping ----------
   function wipeKeys() {
+    setVault(null);
+    try { localStorage.removeItem("rhmb_prefs"); } catch (e) { /* storage unavailable */ }
+    vaultPass = null;
     wallets = [];
     $("keys").value = "";
     $("walletStatus").innerHTML = 'No wallets loaded. <span class="ok">keys wiped from memory.</span>';
@@ -95,6 +98,108 @@
   $("wipe2").onclick = wipeKeys;
   $("clearKeysField").onclick = () => { $("keys").value = ""; };
   window.addEventListener("beforeunload", () => { wallets = []; try { $("keys").value = ""; } catch (e) {} });
+
+  // ---------- encrypted vault (password-protected key storage) ----------
+  const V = {
+    b64(u) { let s = ""; for (const b of u) s += String.fromCharCode(b); return btoa(s); },
+    unb64(s) { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; },
+    async key(pw, salt) {
+      const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+      return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    },
+    async encrypt(pw, plain) {
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const k = await this.key(pw, salt);
+      const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, new TextEncoder().encode(plain));
+      return JSON.stringify({ s: this.b64(salt), i: this.b64(iv), c: this.b64(new Uint8Array(ct)) });
+    },
+    async decrypt(pw, blob) {
+      const o = JSON.parse(blob);
+      const k = await this.key(pw, this.unb64(o.s));
+      const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: this.unb64(o.i) }, k, this.unb64(o.c));
+      return new TextDecoder().decode(pt);
+    }
+  };
+  let vaultPass = null;
+  function getVault() { try { return localStorage.getItem("rhmb_vault"); } catch (e) { return null; } }
+  function setVault(b) { try { if (b === null) localStorage.removeItem("rhmb_vault"); else localStorage.setItem("rhmb_vault", b); } catch (e) { /* storage unavailable */ } }
+  function savePrefs() { try { localStorage.setItem("rhmb_prefs", JSON.stringify({ contract: $("contract").value })); } catch (e) { /* storage unavailable */ } }
+  function getPrefs() { try { return JSON.parse(localStorage.getItem("rhmb_prefs")); } catch (e) { return null; } }
+  function saveVault() {
+    if (!vaultPass) return;
+    const payload = JSON.stringify({ keys: $("keys").value });
+    V.encrypt(vaultPass, payload).then(setVault).catch(() => {});
+  }
+  async function onVaultSubmit() {
+    const pw = $("vaultPass").value;
+    const blob = getVault();
+    if (!blob) {
+      if (pw.length < 4) { $("vaultMsg").textContent = "Password must be at least 4 characters."; return; }
+      if (pw !== $("vaultConfirm").value) { $("vaultMsg").textContent = "Passwords do not match."; return; }
+      setVault(await V.encrypt(pw, "{}"));
+    } else {
+      try { await V.decrypt(pw, blob); }
+      catch (e) { $("vaultMsg").textContent = "Wrong password."; return; }
+    }
+    vaultPass = pw;
+    $("vaultOverlay").style.display = "none";
+    restoreState();
+  }
+  async function restoreState() {
+    const p = getPrefs();
+    if (p && p.contract) $("contract").value = p.contract;
+    const blob = getVault();
+    if (blob && vaultPass) {
+      try {
+        const d = JSON.parse(await V.decrypt(vaultPass, blob));
+        if (d.keys) { $("keys").value = d.keys; loadKeysLocal(); }
+      } catch (e) { log("Could not restore saved keys.", "bad"); }
+    }
+    log("Unlocked. Saved keys restored from the encrypted vault.", "ok");
+  }
+  function loadKeysLocal() {
+    const next = []; let idx = 0;
+    for (const raw of $("keys").value.split("\n")) {
+      const k = normKey(raw); if (!k) continue; idx++;
+      try { const w = new E.Wallet(k); next.push({ wallet: w, address: w.address }); }
+      catch (e) { log("Line " + idx + ": invalid private key — skipped.", "bad"); }
+    }
+    if (!next.length) return;
+    wallets = next;
+    $("keys").value = "";
+    let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">input cleared — held in memory</span><br>";
+    for (const w of wallets) html += '<span class="pill">' + shrink(w.address) + "</span>";
+    $("walletStatus").innerHTML = html;
+    log(wallets.length + " wallet(s) restored from vault.", "ok");
+    updateTotal();
+    maybeAutoGas();
+  }
+  function initVault() {
+    $("vaultTitle").textContent = getVault() ? "Unlock" : "Set a password";
+    $("vaultDesc").textContent = getVault()
+      ? "Enter your password to access your saved wallets."
+      : "Create a password. Private keys are encrypted with it and cleared only when you click Reset/Wipe.";
+    $("vaultConfirmLabel").style.display = getVault() ? "none" : "";
+    $("vaultConfirm").style.display = getVault() ? "none" : "";
+    $("vaultBtn").textContent = getVault() ? "Unlock" : "Create & unlock";
+    $("vaultMsg").textContent = "";
+    $("vaultOverlay").style.display = "flex";
+  }
+  async function onVaultReset() {
+    if (!confirm("Reset clears ALL saved keys and settings. Continue?")) return;
+    setVault(null);
+    try { localStorage.removeItem("rhmb_prefs"); } catch (e) { /* storage unavailable */ }
+    vaultPass = null;
+    wipeKeys();
+    initVault();
+    $("vaultMsg").textContent = "All saved data cleared. Set a new password.";
+  }
+  $("vaultBtn").onclick = onVaultSubmit;
+  $("vaultReset").onclick = onVaultReset;
+  $("vaultPass").addEventListener("keydown", (e) => { if (e.key === "Enter") onVaultSubmit(); });
+  $("vaultConfirm").addEventListener("keydown", (e) => { if (e.key === "Enter") onVaultSubmit(); });
+  $("contract").addEventListener("input", savePrefs);
   $("toggleMask").onclick = () => {
     const t = $("keys"), b = $("toggleMask");
     if (t.classList.contains("mask")) { t.classList.remove("mask"); b.textContent = "Hide"; }
@@ -254,6 +359,7 @@
       return;
     }
     wallets = next;
+    saveVault(); // persist encrypted before clearing the field
     $("keys").value = ""; // hold keys in memory only; clear the field to shorten on-screen exposure
     let html = '<span class="ok">' + wallets.length + " wallet(s) loaded.</span> <span class=\"kv\">input cleared — held in memory</span><br>";
     for (const w of wallets) html += '<span class="pill">' + shrink(w.address) + "</span>";
@@ -969,7 +1075,8 @@
 
   // ---------- init ----------
   restoreRpcPrefs();
+  initVault();
   applyMethodUI();
   renderGasChart(E.parseUnits("0.047", "gwei"), 0n, null); // draw bars immediately (no network call)
-  log("Ready. Client-side only — keys are never stored (RPC endpoints are saved locally). Test RPCs, load a burner key, fetch functions, fire.", "ok");
+  log("Ready. Client-side only — keys are encrypted locally (RPC endpoints are saved too). Test RPCs, unlock, load a burner key, fetch functions, fire.", "ok");
 })();
