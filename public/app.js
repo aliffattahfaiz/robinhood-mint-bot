@@ -173,6 +173,7 @@
     clearFails();
     $("vaultOverlay").style.display = "none";
     restoreState();
+    resetIdle();
   }
   async function restoreState() {
     const p = getPrefs();
@@ -1126,10 +1127,31 @@
   $("feedRefresh").onclick = loadFeed;
   $("feedAuto").onchange = () => { clearInterval(feedTimer); if ($("feedAuto").checked) { loadFeed(); feedTimer = setInterval(loadFeed, 30000); } };
 
+  // ---------- idle lock: re-ask for the password after 10 min without interaction ----------
+  const IDLE_MS = 10 * 60 * 1000;
+  let idleTimer = null;
+  function lockAfterIdle() {
+    if (!vaultPass) return;
+    vaultPass = null;
+    wallets = [];
+    $("keys").value = "";
+    renderWalletList();
+    initVault();
+    log("Idle for 10 minutes — locked. Re-enter your password to restore saved keys.", "warn");
+  }
+  function resetIdle() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(lockAfterIdle, IDLE_MS);
+  }
+  for (const ev of ["mousemove", "mousedown", "keydown", "click", "scroll", "touchstart", "wheel"]) {
+    document.addEventListener(ev, resetIdle, { passive: true });
+  }
+
   // ---------- init ----------
   restoreRpcPrefs();
   initVault();
   applyMethodUI();
   renderGasChart(E.parseUnits("0.047", "gwei"), 0n, null); // draw bars immediately (no network call)
+  resetIdle();
   log("Ready. Client-side only — keys are encrypted locally (RPC endpoints are saved too). Test RPCs, unlock, load a burner key, fetch functions, fire.", "ok");
 })();
