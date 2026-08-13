@@ -628,6 +628,36 @@
   }
   $("proofs").addEventListener("input", parseProofs);
 
+  // Fetch per-wallet proofs from a project endpoint (URL template, {address} per wallet).
+  $("fetchProofs").onclick = async () => {
+    const tpl = $("proofUrl").value.trim();
+    if (!tpl) { log("Enter a proof endpoint template first (with {address}).", "bad"); return; }
+    const sel = selectedWallets();
+    if (!sel.length) { log("Check the wallets you want proofs for.", "bad"); return; }
+    $("fetchProofs").disabled = true;
+    const lines = [];
+    let ok = 0, fail = 0;
+    try {
+      await Promise.all(sel.map(async (w) => {
+        try {
+          const r = await fetch(tpl.replace("{address}", w.address));
+          if (!r.ok) { fail++; log("Fetch failed " + shrink(w.address) + ": HTTP " + r.status, "bad"); return; }
+          const j = await r.json();
+          // accept ["0x..","0x.."] or {proof:[...]} or {merkleProof:[...]}
+          const proof = Array.isArray(j) ? j : (j.proof || j.merkleProof || j.data && (j.data.proof || j.data.merkleProof));
+          if (!Array.isArray(proof) || !proof.length) { fail++; log("No proof in response for " + shrink(w.address), "warn"); return; }
+          lines.push(w.address + ":" + JSON.stringify(proof));
+          ok++;
+        } catch (e) { fail++; log("Fetch failed " + shrink(w.address) + ": " + (e.shortMessage || e.message), "bad"); }
+      }));
+      if (lines.length) {
+        $("proofs").value = ($("proofs").value.trim() ? $("proofs").value.trim() + "\n" : "") + lines.join("\n");
+        parseProofs();
+      }
+      log("Proofs fetched: " + ok + " ok, " + fail + " failed.", fail ? "warn" : "ok");
+    } finally { $("fetchProofs").disabled = false; }
+  };
+
   // mintAllowList needs a per-wallet proof: re-encode p0..p4 (nft/fee/minter/qty/mintParams) with THIS wallet's proof.
   // Returns null if mintAllowList is selected but this wallet has no proof (caller must skip it).
   function dataForWallet(w, base) {

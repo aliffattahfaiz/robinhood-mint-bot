@@ -212,6 +212,10 @@
     <div class="row" style="margin-top:8px">
       <div class="f"><label>MintParams JSON (8 fields, from the on-chain allowlist stage)</label><input id="wlMintParams" placeholder='[0,1,1786642200,1786915800,0,4500,1000,true]' spellcheck="false" autocomplete="off"></div>
     </div>
+    <div class="row" style="margin-top:8px">
+      <div class="f"><label>Proof endpoint template — {address} is replaced per wallet (leave blank to just paste proofs)</label><input id="proofUrl" placeholder="https://site.xyz/api/proof?address={address}" spellcheck="false" autocomplete="off"></div>
+      <button id="fetchProofs">Fetch proofs</button>
+    </div>
     <div class="status" id="wlStatus">Paste proofs, then pick mintAllowList and Fire.</div>
   </div>
 
