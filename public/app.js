@@ -56,6 +56,8 @@
   let wlProofs = {};         // address(lower) -> bytes32[] merkle proof, for mintAllowList
   let watchNft = null;       // collection the allowlist watcher is watching
   let wlRoot = null;         // last seen allowlist merkle root
+  let wlScanning = false;    // guard against overlapping auto-scans
+  let wlScannedSince = 0;    // ms of the last scan burst (rate-limit candidate probing)
 
   // ---------- logging ----------
   const logEl = $("log");
@@ -629,34 +631,81 @@
   $("proofs").addEventListener("input", parseProofs);
 
   // Fetch per-wallet proofs from a project endpoint (URL template, {address} per wallet).
+  async function fetchProofsFor(tpl, silent) {
+    const sel = selectedWallets();
+    if (!sel.length) return 0;
+    const lines = [];
+    let ok = 0, fail = 0;
+    await Promise.all(sel.map(async (w) => {
+      try {
+        const r = await fetch(tpl.replace("{address}", w.address));
+        if (!r.ok) { fail++; if (!silent) log("Fetch failed " + shrink(w.address) + ": HTTP " + r.status, "bad"); return; }
+        const j = await r.json();
+        // accept ["0x..","0x.."] or {proof:[...]} or {merkleProof:[...]}
+        const proof = Array.isArray(j) ? j : (j.proof || j.merkleProof || j.data && (j.data.proof || j.data.merkleProof));
+        if (!Array.isArray(proof) || !proof.length) { fail++; if (!silent) log("No proof in response for " + shrink(w.address), "warn"); return; }
+        lines.push(w.address + ":" + JSON.stringify(proof));
+        ok++;
+      } catch (e) { fail++; if (!silent) log("Fetch failed " + shrink(w.address) + ": " + (e.shortMessage || e.message), "bad"); }
+    }));
+    if (lines.length) {
+      $("proofs").value = ($("proofs").value.trim() ? $("proofs").value.trim() + "\n" : "") + lines.join("\n");
+      parseProofs();
+    }
+    if (!silent) log("Proofs fetched: " + ok + " ok, " + fail + " failed.", fail ? "warn" : "ok");
+    return ok;
+  }
   $("fetchProofs").onclick = async () => {
     const tpl = $("proofUrl").value.trim();
     if (!tpl) { log("Enter a proof endpoint template first (with {address}).", "bad"); return; }
-    const sel = selectedWallets();
-    if (!sel.length) { log("Check the wallets you want proofs for.", "bad"); return; }
+    if (!selectedWallets().length) { log("Check the wallets you want proofs for.", "bad"); return; }
     $("fetchProofs").disabled = true;
-    const lines = [];
-    let ok = 0, fail = 0;
-    try {
-      await Promise.all(sel.map(async (w) => {
-        try {
-          const r = await fetch(tpl.replace("{address}", w.address));
-          if (!r.ok) { fail++; log("Fetch failed " + shrink(w.address) + ": HTTP " + r.status, "bad"); return; }
-          const j = await r.json();
-          // accept ["0x..","0x.."] or {proof:[...]} or {merkleProof:[...]}
-          const proof = Array.isArray(j) ? j : (j.proof || j.merkleProof || j.data && (j.data.proof || j.data.merkleProof));
-          if (!Array.isArray(proof) || !proof.length) { fail++; log("No proof in response for " + shrink(w.address), "warn"); return; }
-          lines.push(w.address + ":" + JSON.stringify(proof));
-          ok++;
-        } catch (e) { fail++; log("Fetch failed " + shrink(w.address) + ": " + (e.shortMessage || e.message), "bad"); }
-      }));
-      if (lines.length) {
-        $("proofs").value = ($("proofs").value.trim() ? $("proofs").value.trim() + "\n" : "") + lines.join("\n");
-        parseProofs();
-      }
-      log("Proofs fetched: " + ok + " ok, " + fail + " failed.", fail ? "warn" : "ok");
-    } finally { $("fetchProofs").disabled = false; }
+    try { await fetchProofsFor(tpl, false); } finally { $("fetchProofs").disabled = false; }
   };
+  $("scanProofs").onclick = async () => { wlScannedSince = 0; await scanProofEndpoint(); };
+
+  // Auto-scan common proof-endpoint shapes for the loaded collection until one answers with a real proof.
+  async function scanProofEndpoint() {
+    if (wlScanning || !watchNft) return;
+    const sel = selectedWallets();
+    if (!sel.length || wlScanning) return;
+    if (Date.now() - wlScannedSince < 20000) return; // at most one candidate burst every 20s
+    wlScanning = true; wlScannedSince = Date.now();
+    try {
+      const base = ($("wlSite").value.trim() || "").replace(/\/+$/, "");
+      if (!base) return;
+      const addr = sel[0].address;
+      const shapes = [
+        base + "/api/proof?address={address}",
+        base + "/api/proof/{address}",
+        base + "/api/allowlist/proof?address={address}",
+        base + "/api/merkle?address={address}",
+        base + "/api/whitelist/proof?address={address}",
+        base + "/api/allowlist?address={address}",
+        base + "/api/check?address={address}",
+        base + "/api/mint/proof?address={address}",
+      ];
+      for (const shape of shapes) {
+        if (wlProofs[addr.toLowerCase()]) return; // already have proofs — stop probing
+        try {
+          const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 4000);
+          const r = await fetch(shape.replace("{address}", addr), { signal: ctrl.signal });
+          clearTimeout(t);
+          if (r.status === 404 || r.status === 405) continue;
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => null);
+          if (!j) continue;
+          const proof = Array.isArray(j) ? j : (j.proof || j.merkleProof || j.data && (j.data.proof || j.data.merkleProof));
+          if (Array.isArray(proof) && proof.length) {
+            $("proofUrl").value = shape;
+            log("🟢 Found proof endpoint: " + shape + " — fetching proofs for all checked wallets…", "ok");
+            await fetchProofsFor(shape, true);
+            return;
+          }
+        } catch (e) {}
+      }
+    } finally { wlScanning = false; }
+  }
 
   // mintAllowList needs a per-wallet proof: re-encode p0..p4 (nft/fee/minter/qty/mintParams) with THIS wallet's proof.
   // Returns null if mintAllowList is selected but this wallet has no proof (caller must skip it).
@@ -1140,6 +1189,7 @@
       if (isSet && wlRoot !== root) {
         wlRoot = root;
         log("🟢 ALLOWLIST ROOT IS SET for " + shrink(nft) + ": " + root + " — the allowlist stage is live on-chain.", "ok");
+        scanProofEndpoint(); // root is live — hunt for the proof endpoint now
       }
       $("wlWatch").innerHTML = isSet
         ? "Allowlist root: <span class='ok'>SET · " + shrink(root) + "</span> — mintAllowList is live, paste proofs and Fire."
@@ -1225,6 +1275,14 @@
     watchNft = item.nft;
     wlRoot = null;
     checkAllowlistRoot();
+    // derive the collection site from the feed-search input when it's a URL, else leave the user's value
+    try {
+      const raw = $("feedSearch").value.trim();
+      if (/^https?:\/\//.test(raw)) {
+        const u = new URL(raw);
+        $("wlSite").value = u.origin;
+      }
+    } catch (e) {}
     log("Loading " + (item.name || shrink(item.nft)) + " …", "");
     let fee = OS_FEE;
     try { if (item.restrictFee) { const fr = await rpc((p) => new E.Contract(SEADROP, SD_READ, p).getAllowedFeeRecipients(item.nft)); if (fr && fr.length) fee = fr[0]; } } catch (e) {}
@@ -1271,7 +1329,7 @@
 
   $("feedRefresh").onclick = loadFeed;
   $("feedAuto").onchange = () => { clearInterval(feedTimer); if ($("feedAuto").checked) { loadFeed(); feedTimer = setInterval(loadFeed, 30000); } };
-  setInterval(() => { if (watchNft) checkAllowlistRoot(); }, 10000); // keep watching the allowlist root every 10s
+  setInterval(() => { if (watchNft) { checkAllowlistRoot(); scanProofEndpoint(); } }, 15000); // watch the allowlist root + auto-scan for the proof endpoint
 
   // Load from a pasted OpenSea link or a collection address → resolve to a contract and auto-fill the SeaDrop mint
   async function loadFromSearch() {

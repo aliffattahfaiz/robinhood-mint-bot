@@ -216,6 +216,10 @@
       <div class="f"><label>Proof endpoint template — {address} is replaced per wallet (leave blank to just paste proofs)</label><input id="proofUrl" placeholder="https://site.xyz/api/proof?address={address}" spellcheck="false" autocomplete="off"></div>
       <button id="fetchProofs">Fetch proofs</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <div class="f"><label>Collection site — auto-scans common proof endpoints here (polled every 15s)</label><input id="wlSite" placeholder="https://hoodbirds.xyz" spellcheck="false" autocomplete="off"></div>
+      <button class="ghost" id="scanProofs">Scan now</button>
+    </div>
     <div class="status" id="wlStatus">Paste proofs, then pick mintAllowList and Fire.</div>
   </div>
 
@@ -293,6 +297,6 @@
 </div>
 
 <script src="vendor/ethers.umd.min.js" integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM" crossorigin="anonymous"></script>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>
