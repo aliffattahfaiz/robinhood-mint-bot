@@ -929,12 +929,12 @@
 
   $("loopMode").onchange = () => {
     const rep = $("loopMode").value === "repeat";
-    $("untilBox").style.display = rep ? "" : "none";
-    $("intervalBox").style.display = rep ? "" : "none";
+    $("untilBox").classList.toggle("hidden", !rep);
+    $("intervalBox").classList.toggle("hidden", !rep);
   };
   $("trigger").onchange = () => {
     const t = $("trigger").value;
-    $("triggerValBox").style.display = t === "now" ? "none" : "";
+    $("triggerValBox").classList.toggle("hidden", t === "now");
     $("triggerValLbl").textContent = t === "block" ? "Block number" : "Unix time (s)";
   };
   $("value").addEventListener("input", () => { updateTotal(); maybeAutoGas(); });
