@@ -135,7 +135,7 @@
     const pw = $("vaultPass").value;
     const blob = getVault();
     if (!blob) {
-      if (pw.length < 4) { $("vaultMsg").textContent = "Password must be at least 4 characters."; return; }
+      if (pw.length < 8) { $("vaultMsg").textContent = "Password must be at least 8 characters."; return; }
       if (pw !== $("vaultConfirm").value) { $("vaultMsg").textContent = "Passwords do not match."; return; }
       setVault(await V.encrypt(pw, "{}"));
     } else {
