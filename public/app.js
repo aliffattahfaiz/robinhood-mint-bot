@@ -1294,13 +1294,18 @@
     $("contract").value = SEADROP;
     await fetchFunctions(); // loads SeaDrop ABI + chips (also sets contractIface for error decoding)
     const live = item.status === "live";
-
-    // Prefer the allowlist function when present — the drop may gate on it (FCFS/GTD races).
     const wlIdx = abiFragments.findIndex((f) => f.name === "mintAllowList");
-    if (wlIdx >= 0) {
-      for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === wlIdx);
-      selectFn(wlIdx);
-      $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
+    const pubIdx = abiFragments.findIndex((f) => f.name === "mintPublic" && f.inputs.length === 4);
+    const mode = $("mintMode").value; // allowlist | public | auto
+
+    const pick = mode === "public" ? pubIdx : mode === "allowlist" ? wlIdx : (wlIdx >= 0 ? wlIdx : pubIdx);
+    if (pick < 0) { log("mintPublic/mintAllowList not found on the SeaDrop ABI — use raw calldata.", "bad"); return; }
+
+    for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === pick);
+    selectFn(pick);
+    $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
+
+    if (pick === wlIdx) {
       // MintParams tuple: [mintPrice, maxTotalMintableByWallet, startTime, endTime, dropStageIndex, maxTokenSupplyForStage, feeBps, restrictFeeRecipients]
       if (!$("wlMintParams").value.trim()) {
         const maxSupply = item.max && item.max > 0n ? Number(item.max) : 4500;
@@ -1316,11 +1321,6 @@
       $("p3").addEventListener("input", () => { try { const q = BigInt($("p3").value.trim() || "0"); $("value").value = E.formatEther(feedUnitPrice * q); $("value").dispatchEvent(new Event("input")); } catch (e) {} });
       log("Loaded " + (item.name || "collection") + " — mintAllowList ready · " + fmtPrice(feedUnitPrice) + " each · max " + item.maxWallet + "/wallet. ⚠ MintParams above must EXACTLY match the project's allowlist stage (they're hashed into the proof) — adjust p4 if needed. Paste proofs below, then Fire." + (live ? " 🟢 LIVE" : " ⚠ not live (" + item.status + ")"), live ? "ok" : "warn");
     } else {
-      const idx = abiFragments.findIndex((f) => f.name === "mintPublic" && f.inputs.length === 4);
-      if (idx < 0) { log("mintPublic/mintAllowList not found on the SeaDrop ABI — use raw calldata.", "bad"); return; }
-      for (const c of $("fnList").children) c.classList.toggle("on", +c.dataset.i === idx);
-      selectFn(idx);
-      $("p0").value = item.nft; $("p1").value = fee; $("p2").value = ZERO; $("p3").value = "1";
       encodeSelected();
       feedUnitPrice = item.price;
       $("value").value = E.formatEther(item.price); // exact per-1 price; SeaDrop requires exact payment

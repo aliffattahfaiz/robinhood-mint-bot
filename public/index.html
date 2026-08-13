@@ -126,6 +126,13 @@
       <div class="f" style="flex:3 1 320px"><label>Paste an OpenSea link or a collection address</label>
         <input id="feedSearch" placeholder="opensea.io/collection/… or 0x… — Enter to auto-fill" spellcheck="false" autocomplete="off" autocapitalize="off"></div>
       <button id="feedSearchBtn">Load</button>
+      <div class="f" style="flex:1 1 160px"><label>Mint mode</label>
+        <select id="mintMode">
+          <option value="allowlist">Allowlist (mintAllowList)</option>
+          <option value="public">Public (mintPublic)</option>
+          <option value="auto">Auto (allowlist if available)</option>
+        </select>
+      </div>
     </div>
     <div class="status" id="feedStatus">Refresh to pull collections minting live on-chain — click one to load it into the bot.</div>
     <div class="status" id="wlWatch"></div>
@@ -297,6 +304,6 @@
 </div>
 
 <script src="vendor/ethers.umd.min.js" integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM" crossorigin="anonymous"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>
