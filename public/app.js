@@ -427,6 +427,25 @@
   // ---------- contract: address + ABI ----------
   function parseAddr(s) { const m = s.match(/0x[a-fA-F0-9]{40}/); if (!m) return null; try { return E.getAddress(m[0]); } catch (e) { return null; } }
 
+  function parseOpenSeaLink(s) {
+    try {
+      const u = new URL(s.trim());
+      if (!/opensea\.io$/i.test(u.hostname)) return null;
+      const seg = u.pathname.split("/").filter(Boolean);
+      if (seg[0] === "collection" && seg[1]) return { kind: "slug", slug: seg[1] };
+      if (seg[0] === "assets" && seg[2]) return { kind: "address", address: seg[2] };
+      return null;
+    } catch (e) { return null; }
+  }
+  async function resolveOpenSeaNft(info) {
+    if (info.kind === "address") return parseAddr(info.address);
+    try {
+      const j = await (await fetch("https://api.opensea.io/api/v2/collections/" + encodeURIComponent(info.slug))).json();
+      const c = (j.contracts || []).find((x) => x.chain === "robinhood") || (j.contracts || [])[0];
+      return c ? parseAddr(c.address) : null;
+    } catch (e) { return null; }
+  }
+
   function classify(name) {
     const n = name.toLowerCase();
     if (/whitelist|allowlist|presale|allow_?list|_wl|wlmint|earlymint/.test(n)) return "wl";
@@ -484,6 +503,17 @@
 
   $("fetchFns").onclick = () => fetchFunctions();
   async function fetchFunctions() {
+    // OpenSea link support: paste a collection URL and we resolve the NFT contract automatically
+    const osInfo = parseOpenSeaLink($("contract").value);
+    if (osInfo) {
+      const nft = await resolveOpenSeaNft(osInfo);
+      if (!nft) { log("Couldn't resolve that OpenSea link to a contract.", "bad"); return; }
+      $("abiStatus").textContent = "Resolving " + shrink(nft) + " on-chain…";
+      const item = await enrichCollection(nft);
+      if (!item) { log("Resolved " + shrink(nft) + " but it's not a readable SeaDrop drop on this chain.", "bad"); return; }
+      await loadCollectionIntoBot(item);
+      return;
+    }
     const addr = parseAddr($("contract").value);
     if (!addr) { log("Couldn't find a contract address in that input.", "bad"); return; }
     contractAddr = addr;
