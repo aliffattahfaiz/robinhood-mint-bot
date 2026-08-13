@@ -122,6 +122,7 @@
     }
   };
   let vaultPass = null;
+  let idleLock = false;
   function getVault() { try { return localStorage.getItem("rhmb_vault"); } catch (e) { return null; } }
   function setVault(b) { try { if (b === null) localStorage.removeItem("rhmb_vault"); else localStorage.setItem("rhmb_vault", b); } catch (e) { /* storage unavailable */ } }
   function getFails() { try { return parseInt(localStorage.getItem("rhmb_fails") || "0", 10) || 0; } catch (e) { return 0; } }
@@ -172,6 +173,7 @@
     vaultPass = pw;
     clearFails();
     $("vaultOverlay").style.display = "none";
+    if (idleLock) { idleLock = false; resetIdle(); return; }
     restoreState();
     resetIdle();
   }
@@ -1133,11 +1135,9 @@
   function lockAfterIdle() {
     if (!vaultPass) return;
     vaultPass = null;
-    wallets = [];
-    $("keys").value = "";
-    renderWalletList();
+    idleLock = true;
     initVault();
-    log("Idle for 10 minutes — locked. Re-enter your password to restore saved keys.", "warn");
+    log("Idle for 10 minutes — locked. Re-enter your password to continue.", "warn");
   }
   function resetIdle() {
     clearTimeout(idleTimer);
