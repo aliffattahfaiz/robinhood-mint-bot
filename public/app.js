@@ -1221,7 +1221,7 @@
       $("value").value = E.formatEther(feedUnitPrice);
       $("value").dispatchEvent(new Event("input"));
       $("p3").addEventListener("input", () => { try { const q = BigInt($("p3").value.trim() || "0"); $("value").value = E.formatEther(feedUnitPrice * q); $("value").dispatchEvent(new Event("input")); } catch (e) {} });
-      log("Loaded " + (item.name || "collection") + " — mintAllowList ready · " + fmtPrice(feedUnitPrice) + " each · max " + item.maxWallet + "/wallet. Paste proofs below, then Fire." + (live ? " 🟢 LIVE" : " ⚠ not live (" + item.status + ")"), live ? "ok" : "warn");
+      log("Loaded " + (item.name || "collection") + " — mintAllowList ready · " + fmtPrice(feedUnitPrice) + " each · max " + item.maxWallet + "/wallet. ⚠ MintParams above must EXACTLY match the project's allowlist stage (they're hashed into the proof) — adjust p4 if needed. Paste proofs below, then Fire." + (live ? " 🟢 LIVE" : " ⚠ not live (" + item.status + ")"), live ? "ok" : "warn");
     } else {
       const idx = abiFragments.findIndex((f) => f.name === "mintPublic" && f.inputs.length === 4);
       if (idx < 0) { log("mintPublic/mintAllowList not found on the SeaDrop ABI — use raw calldata.", "bad"); return; }
